@@ -16,16 +16,19 @@ var swiftSettings: [SwiftSetting] = [
     //.define("SQLITE_ENABLE_FTS5"),
     //.define("SQLITE_ENABLE_SNAPSHOT"),
     // Not all Linux distributions have support for WAL snapshots.
+    .define("SQLITE_ENABLE_PREUPDATE_HOOK"),  // add this
     .define("SQLITE_DISABLE_SNAPSHOT", .when(platforms: [.linux])),
 ]
-var cSettings: [CSetting] = []
+var cSettings: [CSetting] = [
+    .define("GRDB_SQLITE_ENABLE_PREUPDATE_HOOK"),  // add this
+]
 var dependencies: [PackageDescription.Package.Dependency] = []
 
 // Don't rely on those environment variables. They are ONLY testing conveniences:
 // $ SQLITE_ENABLE_PREUPDATE_HOOK=1 make test_SPM
 if ProcessInfo.processInfo.environment["SQLITE_ENABLE_PREUPDATE_HOOK"] == "1" {
-    swiftSettings.append(.define("SQLITE_ENABLE_PREUPDATE_HOOK"))
-    cSettings.append(.define("GRDB_SQLITE_ENABLE_PREUPDATE_HOOK"))
+    //swiftSettings.append(.define("SQLITE_ENABLE_PREUPDATE_HOOK"))
+    //cSettings.append(.define("GRDB_SQLITE_ENABLE_PREUPDATE_HOOK"))
 }
 
 // The SPI_BUILDER environment variable enables documentation building
@@ -83,11 +86,12 @@ let package = Package(
                 .define("SQLITE_ENABLE_FTS3"),
                 .define("SQLITE_ENABLE_FTS4"),
                 .define("SQLITE_ENABLE_JSON1"),
-                .define("SQLITE_OMIT_BUILTIN_TEST"),
-                .define("SQLITE_OMIT_COMPILEOPTION_DIAGS"),
+                //.define("SQLITE_OMIT_BUILTIN_TEST"),
+                //.define("SQLITE_OMIT_COMPILEOPTION_DIAGS"),
                 .define("SQLITE_DEFAULT_FILE_PERMISSIONS", to: "0600"),
                 .define("SQLITE_ENABLE_RTREE"),
                 .define("SQLITE_ENABLE_LOAD_EXTENSION"),
+                .define("SQLITE_ENABLE_PREUPDATE_HOOK")
             ]),
         // GRDB+SQLCipher: Uncomment the GRDBSQLCipher target
         //.target(
