@@ -13,8 +13,8 @@ let darwinPlatforms: [Platform] = [
     .watchOS,
 ]
 var swiftSettings: [SwiftSetting] = [
-    .define("SQLITE_ENABLE_FTS5"),
-    .define("SQLITE_ENABLE_SNAPSHOT"),
+    //.define("SQLITE_ENABLE_FTS5"),
+    //.define("SQLITE_ENABLE_SNAPSHOT"),
     // Not all Linux distributions have support for WAL snapshots.
     .define("SQLITE_DISABLE_SNAPSHOT", .when(platforms: [.linux])),
 ]
@@ -62,9 +62,33 @@ let package = Package(
     dependencies: dependencies,
     targets: [
         // GRDB+SQLCipher: Delete the GRDBSQLite target
-        .systemLibrary(
+        //.systemLibrary(
+        //    name: "GRDBSQLite",
+        //    providers: [.apt(["libsqlite3-dev"])]),
+        
+        .target(
             name: "GRDBSQLite",
-            providers: [.apt(["libsqlite3-dev"])]),
+            path: "Sources/GRDBSQLite",
+            publicHeadersPath: ".",
+            cSettings: [
+                .define("NDEBUG"),
+                .define("SQLITE_HAVE_ISNAN"),
+                .define("SQLITE_DEFAULT_JOURNAL_SIZE_LIMIT", to: "1048576"),
+                .define("SQLITE_THREADSAFE", to: "2"),
+                .define("SQLITE_TEMP_STORE", to: "3"),
+                .define("SQLITE_POWERSAFE_OVERWRITE", to: "1"),
+                .define("SQLITE_DEFAULT_FILE_FORMAT", to: "4"),
+                .define("SQLITE_DEFAULT_AUTOVACUUM", to: "1"),
+                .define("SQLITE_ENABLE_MEMORY_MANAGEMENT"),
+                .define("SQLITE_ENABLE_FTS3"),
+                .define("SQLITE_ENABLE_FTS4"),
+                .define("SQLITE_ENABLE_JSON1"),
+                .define("SQLITE_OMIT_BUILTIN_TEST"),
+                .define("SQLITE_OMIT_COMPILEOPTION_DIAGS"),
+                .define("SQLITE_DEFAULT_FILE_PERMISSIONS", to: "0600"),
+                .define("SQLITE_ENABLE_RTREE"),
+                .define("SQLITE_ENABLE_LOAD_EXTENSION"),
+            ]),
         // GRDB+SQLCipher: Uncomment the GRDBSQLCipher target
         //.target(
         //    name: "GRDBSQLCipher",
