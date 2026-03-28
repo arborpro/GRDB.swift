@@ -211663,7 +211663,7 @@ static int icuLikeCompare(
 ){
   static const uint32_t MATCH_ONE = (uint32_t)'_';
   static const uint32_t MATCH_ALL = (uint32_t)'%';
-
+  
   int prevEscape = 0;     /* True if the previous character was uEsc */
 
   while( 1 ){
@@ -212008,7 +212008,10 @@ static void icuLoadCollation(
   UCollator *pUCollator;    /* ICU library collation object */
   int rc;                   /* Return code from sqlite3_create_collation_x() */
 
-  assert(nArg==2);
+  if (nArg!=2 && nArg!=3) {
+    sqlite3_result_error(p, 
+        "wrong number of arguments to function icu_load_collation(locale(string),name(string),collationStrength(int))", -1);
+  }
   (void)nArg; /* Unused parameter */
   zLocale = (const char *)sqlite3_value_text(apArg[0]);
   zName = (const char *)sqlite3_value_text(apArg[1]);
@@ -212024,6 +212027,13 @@ static void icuLoadCollation(
   }
   assert(p);
 
+  if (nArg==3) {
+    int collStrength = sqlite3_value_int(apArg[2]);
+    if (collStrength>0 && collStrength<=4) {
+      ucol_setStrength(pUCollator, collStrength-1);
+    }
+  }
+  ucol_setStrength(pUCollator, 0);
   rc = sqlite3_create_collation_v2(db, zName, SQLITE_UTF16, (void *)pUCollator,
       icuCollationColl, icuCollationDel
   );
@@ -212032,6 +212042,78 @@ static void icuLoadCollation(
     sqlite3_result_error(p, "Error registering collation function", -1);
   }
 }
+
+#if !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_ICU)
+char* remove_accents(const char* input) {
+    UErrorCode status = U_ZERO_ERROR;
+
+    int32_t utf8_len = strlen(input);
+    UChar* source = (UChar*)malloc((utf8_len + 1) * sizeof(UChar)); // +1 for null terminator
+
+    u_strFromUTF8(source, utf8_len + 1, NULL, input, utf8_len, &status);
+    if (U_FAILURE(status)) {
+        printf("Error converting from UTF-8: %s\n", u_errorName(status));
+        free(source);
+        return NULL;
+    }
+
+    UChar* dest = (UChar*)malloc((utf8_len + 1) * sizeof(UChar));
+
+    const UNormalizer2* norm2 = unorm2_getNFDInstance(&status);
+    if (U_FAILURE(status)) {
+        printf("Error getting NFD instance: %s\n", u_errorName(status));
+        free(source);
+        free(dest);
+        return NULL;
+    }
+
+    int32_t srcLength = u_strlen(source);
+    int32_t destLength = unorm2_normalize(norm2, source, srcLength, dest, utf8_len + 1, &status);
+
+    if (U_FAILURE(status)) {
+        printf("Error normalizing: %s\n", u_errorName(status));
+        free(source);
+        free(dest);
+        return NULL;
+    }
+
+    // Allocate a buffer for the result with enough space
+    char* output = (char*)malloc((utf8_len + 1) * sizeof(char));
+    int32_t outputIndex = 0;
+
+    for (int32_t i = 0; i < destLength; i++) {
+        if (dest[i] == ' ' || u_isbase(dest[i])) {
+            output[outputIndex++] = (char)dest[i];
+        }
+    }
+
+    output[outputIndex] = '\0';
+
+    free(source);
+    free(dest);
+
+    return output;
+}
+
+
+static void sqlite_remove_accents(sqlite3_context* context, int argc, sqlite3_value** argv) {
+    if (argc != 1 || sqlite3_value_type(argv[0]) != SQLITE_TEXT) {
+        sqlite3_result_error(context, "Invalid arguments", -1);
+        return;
+    }
+
+    const char* input = (const char*)sqlite3_value_text(argv[0]);
+    char* result = remove_accents(input); 
+
+    if (result) {
+        sqlite3_result_text(context, result, -1, SQLITE_TRANSIENT);
+        free(result);
+    } else {
+        sqlite3_result_error(context, "Failed to process input", -1);
+    }
+}
+
+#endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_ICU) */
 
 /*
 ** Register the ICU extension functions with database db.
@@ -212045,7 +212127,7 @@ SQLITE_PRIVATE int sqlite3IcuInit(sqlite3 *db){
     unsigned char iContext;                   /* sqlite3_user_data() context */
     void (*xFunc)(sqlite3_context*,int,sqlite3_value**);
   } scalars[] = {
-    {"icu_load_collation",2,SQLITE_UTF8|SQLITE_DIRECTONLY,1, icuLoadCollation},
+    {"icu_load_collation",3,SQLITE_UTF8|SQLITE_DIRECTONLY,1, icuLoadCollation},
 #if !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_ICU)
     {"regexp", 2, SQLITE_ANY|SQLITEICU_EXTRAFLAGS,         0, icuRegexpFunc},
     {"lower",  1, SQLITE_UTF16|SQLITEICU_EXTRAFLAGS,       0, icuCaseFunc16},
@@ -212058,6 +212140,7 @@ SQLITE_PRIVATE int sqlite3IcuInit(sqlite3 *db){
     {"upper",  2, SQLITE_UTF8|SQLITEICU_EXTRAFLAGS,        1, icuCaseFunc16},
     {"like",   2, SQLITE_UTF8|SQLITEICU_EXTRAFLAGS,        0, icuLikeFunc},
     {"like",   3, SQLITE_UTF8|SQLITEICU_EXTRAFLAGS,        0, icuLikeFunc},
+    {"remove_accents",1,SQLITE_UTF8,0,sqlite_remove_accents},
 #endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_ICU) */
   };
   int rc = SQLITE_OK;
@@ -212140,6 +212223,8 @@ struct IcuCursor {
 
   int iToken;
 };
+
+
 
 /*
 ** Create a new tokenizer instance.
@@ -250814,3 +250899,73 @@ SQLITE_API int sqlite3_stmt_init(
 /* Return the source-id for this library */
 SQLITE_API const char *sqlite3_sourceid(void){ return SQLITE_SOURCE_ID; }
 /************************** End of sqlite3.c ******************************/
+
+
+
+
+#if !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_ICU)
+void test_remove_accents() {
+    struct TestCase {
+        const char* input;
+        const char* expectedOutput;
+    };
+
+    struct TestCase testCases[] = {
+        {"café", "cafe"},
+        {"élite", "elite"},
+        {"résumé", "resume"},
+        {"touché", "touche"},
+        {"façade", "facade"},
+        {"jalapeño", "jalapeno"},
+        {"papier-mâché", "papiermache"},
+        {"măr", "mar"},
+        {"pâine", "paine"},
+        {"mîncare", "mincare"},
+        {"șarpe", "sarpe"},
+        {"țară", "tara"},
+        // ... [Add more test cases here] ...
+    };
+
+    for (int i = 0; i < sizeof(testCases) / sizeof(testCases[0]); i++) {
+        char* result = remove_accents(testCases[i].input);
+        assert(strcmp(result, testCases[i].expectedOutput) == 0);
+        free(result);
+    }
+
+
+    // Testing with a large string:
+    const char* single_ă = "ă";
+    const size_t single_ă_length = strlen(single_ă);
+    const int repeatCount = 1024*1024*10;  // Adjust this for the desired size
+    
+    size_t largeSize = single_ă_length * repeatCount + 1;
+    char* largeInput = (char*)malloc(largeSize);
+
+    for (int i = 0; i < repeatCount; i++) {
+        strcpy(largeInput + i * single_ă_length, single_ă);
+    }
+
+    const char* single_a = "a"; 
+    char* largeExpectedOutput = (char*)malloc(repeatCount + 1);  // Just a series of 'a' characters
+    for (int i = 0; i < repeatCount; i++) {
+        strcpy(largeExpectedOutput + i, single_a);
+    }
+
+    char* largeResult = remove_accents(largeInput);
+
+    assert(strcmp(largeResult, largeExpectedOutput) == 0);
+
+    free(largeInput);
+    free(largeExpectedOutput);
+    free(largeResult);
+}
+
+// int main() {
+//    for(int i=0;i<100;i++)
+//    {
+//        test_remove_accents();
+       
+//    }
+//     return 0;
+// }
+#endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_ICU) */
